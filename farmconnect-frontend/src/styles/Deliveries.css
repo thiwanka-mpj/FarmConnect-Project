@@ -1,0 +1,155 @@
+.deliveries-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.deliveries-container h1 {
+  color: #1b4332;
+  margin-bottom: 2rem;
+}
+
+.delivery-filters {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+
+.filter-button {
+  padding: 0.75rem 1.5rem;
+  border: 2px solid #52b788;
+  background: white;
+  color: #2d6a4f;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.3s;
+}
+
+.filter-button:hover {
+  background-color: #d8f3dc;
+}
+
+.filter-button.active {
+  background-color: #52b788;
+  color: white;
+}
+
+.deliveries-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.delivery-card {
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.delivery-header {
+  background-color: #d8f3dc;
+  padding: 1rem 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.delivery-id {
+  display: flex;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.delivery-id .label {
+  color: #40916c;
+}
+
+.delivery-id .value {
+  color: #1b4332;
+}
+
+.delivery-status {
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  color: white;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.delivery-info {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.delivery-actions {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid #d8f3dc;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.delivery-actions label {
+  font-weight: 600;
+  color: #2d6a4f;
+}
+
+.status-select {
+  padding: 0.5rem 1rem;
+  border: 2px solid #d8f3dc;
+  border-radius: 5px;
+  font-weight: 600;
+  color: #1b4332;
+  cursor: pointer;
+}
+
+.status-select:focus {
+  outline: none;
+  border-color: #52b788;
+}
+
+.no-deliveries {
+  text-align: center;
+  padding: 3rem;
+  color: #40916c;
+}
+
+.detail-section {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid #d8f3dc;
+}
+
+.detail-section:last-child {
+  border-bottom: none;
+}
+
+.detail-section h3 {
+  color: #1b4332;
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 768px) {
+  .delivery-filters {
+    flex-direction: column;
+  }
+
+  .filter-button {
+    width: 100%;
+  }
+
+  .delivery-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .status-select {
+    width: 100%;
+  }
+}

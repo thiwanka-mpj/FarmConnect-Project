@@ -1,0 +1,26 @@
+.admin-dashboard {
+  background-color: #f8f9fa;
+  min-height: calc(100vh - 200px);
+}
+
+.admin-stats-section {
+  margin-bottom: 3rem;
+}
+
+.section-title {
+  color: #1b4332;
+  font-size: 1.5rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 3px solid hsl(120, 67%, 42%);
+}
+
+.stat-card.large {
+  grid-column: span 1;
+}
+
+@media (max-width: 768px) {
+  .stat-card.large {
+    grid-column: span 1;
+  }
+}
