@@ -1,0 +1,51 @@
+############################
+# Global Git Ignore for FarmConnect
+############################
+
+### Backend (Spring Boot + Maven) ###
+target/
+**/target/
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+*.log
+*.tmp
+*.bak
+*.swp
+*.orig
+.DS_Store
+Thumbs.db
+*.jar
+*.war
+*.ear
+
+# Environment / Config files - never commit real secrets
+.env
+.env.*
+!.env.example
+**/application-*.yml
+**/application-*.properties
+
+############################
+### Frontend (React) ###
+############################
+farmconnect-frontend/node_modules/
+farmconnect-frontend/build/
+farmconnect-frontend/.env.local
+farmconnect-frontend/.env.*.local
+
+############################
+### Terraform ###
+############################
+Terraform/.terraform/
+Terraform/*.tfstate
+Terraform/*.tfstate.backup
+Terraform/*.tfvars
+Terraform/.terraform.lock.hcl
+
+############################
+### Misc ###
+############################
+.vscode/
