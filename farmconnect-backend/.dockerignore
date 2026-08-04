@@ -1,0 +1,11 @@
+# Applies to every backend image build (context is farmconnect-backend for all of them).
+**/target/
+**/.mvn/
+**/mvnw
+**/mvnw.cmd
+**/*.iml
+.git
+.gitignore
+*.md
+.idea
+.vscode
