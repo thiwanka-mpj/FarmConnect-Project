@@ -1,0 +1,19 @@
+# ClusterIP, not LoadBalancer - the Ingress (ingress.yml, in this same folder) is now the
+# public entry point instead, provisioning an AWS ALB via the AWS Load Balancer Controller.
+# Keeping this as type: LoadBalancer as well would create a second, redundant load balancer
+# alongside the ALB - this Service exists purely so the Ingress has something to route to.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: farmconnect
+  labels:
+    app: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80

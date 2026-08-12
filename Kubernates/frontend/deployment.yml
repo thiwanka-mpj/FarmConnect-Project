@@ -1,0 +1,52 @@
+# No env vars needed here - the same image built for docker-compose already proxies
+# /api and /uploads to "http://api-gateway:8080" in its nginx.conf, and the Kubernetes
+# Service for api-gateway (see ../api-gateway/svc.yml) is named exactly "api-gateway" -
+# so this image runs unchanged in EKS.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: farmconnect
+  labels:
+    app: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: frontend
+          image: "<DOCKERHUB_USERNAME>/farmconnect-frontend:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"

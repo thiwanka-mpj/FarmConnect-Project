@@ -1,0 +1,1383 @@
+# ============================================================================
+# FarmConnect - complete-deploy.yml
+#
+# Single-file version of every manifest in this directory, in dependency order,
+# for a one-shot manual deploy:
+#
+#   kubectl apply -f complete-deploy.yml
+#
+# This is a FALLBACK path. The primary way to deploy this project is ArgoCD/GitOps -
+# see ../argocd/README.md. ArgoCD is deliberately configured to IGNORE this specific
+# file (see argocd/application.yaml's directory.exclude) so it never conflicts with
+# the individual per-service files it actually syncs.
+#
+# Prerequisites before running this:
+#   1. Push every image to Docker Hub and replace every "<DOCKERHUB_USERNAME>" placeholder
+#      below with your real Docker Hub username (docker-publish.yml does this
+#      automatically if you're using the CI pipeline - see Kubernates/README.md).
+#   2. Create the real farmconnect-secrets Secret separately - do NOT apply the
+#      secrets.yaml in this repo as-is, it only ever contains placeholder text. Either
+#      run .github/workflows/bootstrap-secrets.yml, or see secrets.yaml's own comments
+#      for the equivalent kubectl one-liner.
+#   3. Make sure your EKS cluster has the EBS CSI driver add-on installed - the 3
+#      databases and Kafka all provision persistent volumes and will stay Pending
+#      without it.
+#   4. Install the AWS Load Balancer Controller - the frontend Ingress needs it
+#      to actually provision an ALB. See frontend/ingress.yml's comments for the install
+#      command. Without it, the Ingress object will apply fine but never get an ADDRESS.
+#
+# kubectl doesn't guarantee startup ordering the way docker-compose's depends_on +
+# healthcheck did - pods for e.g. user-service will crash-loop for a bit if user-db
+# or config-server aren't ready yet. That's expected; Kubernetes restarts them with
+# backoff until their dependencies come up, and the readiness probes keep traffic
+# away from them in the meantime. Give it 3-5 minutes on a first deploy before
+# concluding something is actually wrong (`kubectl get pods -n farmconnect -w`).
+#
+# Prefer applying the individual files in each service's folder instead? Same specs,
+# just easier to diff/review one service at a time:
+#   kubectl apply -f namespace.yaml -f serviceaccount.yml -f configmap.yaml
+#   kubectl apply -f discovery-service/ -f config-server/ -f redis/ -f kafka/
+#   kubectl apply -f user-db/ -f product-db/ -f order-db/
+#   kubectl apply -f user-service/ -f product-service/ -f order-service/ -f admin-service/
+#   kubectl apply -f api-gateway/ -f frontend/
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Namespace
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: farmconnect
+  labels:
+    app.kubernetes.io/part-of: farmconnect
+
+# ---------------------------------------------------------------------------
+# ServiceAccount
+# ---------------------------------------------------------------------------
+---
+# Every pod in this project runs as this service account instead of "default" - gives us
+# a single place to attach IAM permissions later (IRSA) if a service ever needs to talk
+# to an AWS API directly (e.g. product-service uploading to S3 instead of local disk),
+# and a single place to attach image pull credentials if your Docker Hub repos are private.
+#
+# --- IRSA (only needed if a pod needs to call an AWS API directly) ---
+#   1. Create an IAM role with a trust policy for your cluster's OIDC provider
+#      (the EKS+VPC Terraform you already provisioned should have created the OIDC
+#      provider - `terraform output` or `aws eks describe-cluster` will have its URL/ARN).
+#   2. Uncomment the annotation below and set the role ARN.
+#   3. `kubectl apply -f serviceaccount.yml` again to pick up the change, then roll the
+#      relevant deployments (`kubectl rollout restart deployment/<name> -n farmconnect`)
+#      so their pods pick up the new token projection.
+#
+# --- Private Docker Hub repos ---
+# If you pushed the farmconnect-* images to PRIVATE Docker Hub repositories (public repos
+# need none of this - it's only for private ones), every pod needs pull credentials:
+#   kubectl create secret docker-registry dockerhub-creds \
+#     --namespace farmconnect \
+#     --docker-server=https://index.docker.io/v1/ \
+#     --docker-username=<your-dockerhub-username> \
+#     --docker-password=<your-dockerhub-token> \
+#   Then uncomment the imagePullSecrets block below and re-apply.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: farmconnect-sa
+  namespace: farmconnect
+  # annotations:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::<AWS_ACCOUNT_ID>:role/farmconnect-workload-role
+# imagePullSecrets:
+#   - name: dockerhub-creds
+
+# ---------------------------------------------------------------------------
+# Secrets (placeholders - see header comment above, don't apply this as-is)
+# ---------------------------------------------------------------------------
+---
+# PLACEHOLDER VALUES - replace before applying, and never commit the real values to git.
+# stringData lets you write plaintext here (Kubernetes base64-encodes it on apply) so you
+# don't have to hand-encode anything, but that also means this file itself is sensitive
+# once filled in - keep it out of version control (see .gitignore note in README) or,
+# better, generate it at deploy time instead:
+#
+#   kubectl create secret generic farmconnect-secrets -n farmconnect \
+#     --from-literal=JWT_SECRET="$(openssl rand -hex 32)" \
+#     --from-literal=MYSQL_ROOT_PASSWORD="<a-strong-password>" \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#
+# For a real production setup, use AWS Secrets Manager + the External Secrets Operator
+# (or AWS Secrets and Configuration Provider for the Secrets Store CSI Driver) instead of
+# a plain Kubernetes Secret - this file is the "get it running" version.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: farmconnect-secrets
+  namespace: farmconnect
+type: Opaque
+stringData:
+  JWT_SECRET: "REPLACE_WITH_OPENSSL_RAND_HEX_32_OUTPUT"
+  MYSQL_ROOT_PASSWORD: "REPLACE_WITH_A_STRONG_PASSWORD"
+
+# ---------------------------------------------------------------------------
+# Shared ConfigMap
+# ---------------------------------------------------------------------------
+---
+# Shared, non-secret config injected into every business/infra service via envFrom.
+# Values here use Kubernetes Service names (see each svc.yml) - since every Service is
+# named identically to its docker-compose counterpart, these match the defaults already
+# baked into each service's application.properties (e.g. ${EUREKA_URI:http://discovery-service:8761/eureka/}).
+# They're spelled out explicitly here anyway rather than relying on those defaults, since
+# a manifest that states its own wiring is easier to reason about than one that doesn't.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: farmconnect-config
+  namespace: farmconnect
+data:
+  EUREKA_URI: "http://discovery-service:8761/eureka/"
+  CONFIG_SERVER_URI: "http://config-server:8888"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  # Replace with your actual ALB/NLB hostname (or domain, once you put one in front of it)
+  # once you know it - `kubectl get svc frontend -n farmconnect` after the first deploy.
+  CORS_ALLOWED_ORIGINS: "http://localhost"
+  JPA_DDL_AUTO: "validate"
+
+# ---------------------------------------------------------------------------
+# discovery-service (Eureka)
+# ---------------------------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: discovery-service
+  namespace: farmconnect
+  labels:
+    app: discovery-service
+spec:
+  replicas: 1  # Eureka peers would need each other's address to cluster - single instance for now
+  selector:
+    matchLabels:
+      app: discovery-service
+  template:
+    metadata:
+      labels:
+        app: discovery-service
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: discovery-service
+          # Build & push from ./farmconnect-backend (Dockerfile: discovery-service/Dockerfile)
+          # to your Docker Hub repo, then replace this placeholder.
+          image: "<DOCKERHUB_USERNAME>/farmconnect-discovery-service:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8761
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8761
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8761
+            initialDelaySeconds: 40
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+# ---------------------------------------------------------------------------
+# discovery-service - Service
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: discovery-service
+  namespace: farmconnect
+  labels:
+    app: discovery-service
+spec:
+  type: ClusterIP
+  selector:
+    app: discovery-service
+  ports:
+    - name: http
+      port: 8761
+      targetPort: 8761
+
+# ---------------------------------------------------------------------------
+# config-server
+# ---------------------------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config-server
+  namespace: farmconnect
+  labels:
+    app: config-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: config-server
+  template:
+    metadata:
+      labels:
+        app: config-server
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: config-server
+          image: "<DOCKERHUB_USERNAME>/farmconnect-config-server:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8888
+              name: http
+          envFrom:
+            - configMapRef:
+                name: farmconnect-config
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8888
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8888
+            initialDelaySeconds: 40
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+# ---------------------------------------------------------------------------
+# config-server - Service
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: config-server
+  namespace: farmconnect
+  labels:
+    app: config-server
+spec:
+  type: ClusterIP
+  selector:
+    app: config-server
+  ports:
+    - name: http
+      port: 8888
+      targetPort: 8888
+
+# ---------------------------------------------------------------------------
+# redis
+# ---------------------------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: farmconnect
+  labels:
+    app: redis
+spec:
+  replicas: 1  # cache only (gateway rate-limit counters) - fine to lose on restart
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: redis
+          image: "redis:7-alpine"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6379
+              name: redis
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+
+# ---------------------------------------------------------------------------
+# redis - Service
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: farmconnect
+  labels:
+    app: redis
+spec:
+  type: ClusterIP
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+
+# ---------------------------------------------------------------------------
+# kafka (StatefulSet, KRaft mode)
+# ---------------------------------------------------------------------------
+---
+# StatefulSet (not a plain Deployment) because Kafka needs a stable identity + persistent
+# disk across restarts - the file is still named deployment.yml to match every other
+# service folder's naming convention.
+#
+# Prerequisite: your EKS cluster needs the EBS CSI driver installed (it's an EKS add-on -
+# `aws eks describe-addon --cluster-name <cluster> --addon-name aws-ebs-csi-driver`, or
+# add it via your Terraform if it's not there yet) so the volumeClaimTemplate below can
+# actually provision a disk. Without it, the pod will sit in Pending forever.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: farmconnect
+  labels:
+    app: kafka
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: kafka
+          image: "apache/kafka:3.7.0"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9092
+              name: plaintext
+            - containerPort: 9093
+              name: controller
+          env:
+            - name: KAFKA_NODE_ID
+              value: "1"
+            - name: KAFKA_PROCESS_ROLES
+              value: "broker,controller"
+            - name: KAFKA_LISTENERS
+              value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://kafka:9092"
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: "1@kafka-0.kafka:9093"
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: "PLAINTEXT"
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
+          readinessProbe:
+            exec:
+              command: ["/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+  volumeClaimTemplates:
+    - metadata:
+        name: kafka-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+
+# ---------------------------------------------------------------------------
+# kafka - Service
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: farmconnect
+  labels:
+    app: kafka
+spec:
+  type: ClusterIP
+  selector:
+    app: kafka
+  ports:
+    - name: plaintext
+      port: 9092
+      targetPort: 9092
+    - name: controller
+      port: 9093
+      targetPort: 9093
+
+# ---------------------------------------------------------------------------
+# user-db (StatefulSet)
+# ---------------------------------------------------------------------------
+---
+# StatefulSet (not a plain Deployment) - a database needs a stable identity + persistent
+# disk across restarts. File is still named deployment.yml to match the folder convention
+# used across every service in this Kubernates/ directory.
+#
+# Prerequisite: EBS CSI driver installed on the cluster (see kafka/deployment.yml's note -
+# same requirement applies here). Without it the volumeClaimTemplate PVC stays Pending.
+#
+# This reuses the exact same image built for docker-compose (database/user-db/Dockerfile) -
+# the schema is already baked in, so there's no separate init step to manage here.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: user-db
+  namespace: farmconnect
+  labels:
+    app: user-db
+spec:
+  serviceName: user-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-db
+  template:
+    metadata:
+      labels:
+        app: user-db
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: user-db
+          image: "<DOCKERHUB_USERNAME>/farmconnect-user-db:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3306
+              name: mysql
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: farmconnect-secrets
+                  key: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              value: "user_db"
+          volumeMounts:
+            - name: user-db-data
+              mountPath: /var/lib/mysql
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "mysqladmin ping -h localhost -u root -p\"$MYSQL_ROOT_PASSWORD\""]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "mysqladmin ping -h localhost -u root -p\"$MYSQL_ROOT_PASSWORD\""]
+            initialDelaySeconds: 40
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+  volumeClaimTemplates:
+    - metadata:
+        name: user-db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+
+# ---------------------------------------------------------------------------
+# user-db - Service
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-db
+  namespace: farmconnect
+  labels:
+    app: user-db
+spec:
+  type: ClusterIP
+  selector:
+    app: user-db
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306
+
+# ---------------------------------------------------------------------------
+# product-db (StatefulSet)
+# ---------------------------------------------------------------------------
+---
+# StatefulSet (not a plain Deployment) - a database needs a stable identity + persistent
+# disk across restarts. File is still named deployment.yml to match the folder convention
+# used across every service in this Kubernates/ directory.
+#
+# Prerequisite: EBS CSI driver installed on the cluster (see kafka/deployment.yml's note -
+# same requirement applies here). Without it the volumeClaimTemplate PVC stays Pending.
+#
+# This reuses the exact same image built for docker-compose (database/product-db/Dockerfile) -
+# the schema is already baked in, so there's no separate init step to manage here.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: product-db
+  namespace: farmconnect
+  labels:
+    app: product-db
+spec:
+  serviceName: product-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-db
+  template:
+    metadata:
+      labels:
+        app: product-db
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: product-db
+          image: "<DOCKERHUB_USERNAME>/farmconnect-product-db:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3306
+              name: mysql
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: farmconnect-secrets
+                  key: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              value: "product_db"
+          volumeMounts:
+            - name: product-db-data
+              mountPath: /var/lib/mysql
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "mysqladmin ping -h localhost -u root -p\"$MYSQL_ROOT_PASSWORD\""]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "mysqladmin ping -h localhost -u root -p\"$MYSQL_ROOT_PASSWORD\""]
+            initialDelaySeconds: 40
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+  volumeClaimTemplates:
+    - metadata:
+        name: product-db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+
+# ---------------------------------------------------------------------------
+# product-db - Service
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-db
+  namespace: farmconnect
+  labels:
+    app: product-db
+spec:
+  type: ClusterIP
+  selector:
+    app: product-db
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306
+
+# ---------------------------------------------------------------------------
+# order-db (StatefulSet)
+# ---------------------------------------------------------------------------
+---
+# StatefulSet (not a plain Deployment) - a database needs a stable identity + persistent
+# disk across restarts. File is still named deployment.yml to match the folder convention
+# used across every service in this Kubernates/ directory.
+#
+# Prerequisite: EBS CSI driver installed on the cluster (see kafka/deployment.yml's note -
+# same requirement applies here). Without it the volumeClaimTemplate PVC stays Pending.
+#
+# This reuses the exact same image built for docker-compose (database/order-db/Dockerfile) -
+# the schema is already baked in, so there's no separate init step to manage here.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: order-db
+  namespace: farmconnect
+  labels:
+    app: order-db
+spec:
+  serviceName: order-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-db
+  template:
+    metadata:
+      labels:
+        app: order-db
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: order-db
+          image: "<DOCKERHUB_USERNAME>/farmconnect-order-db:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3306
+              name: mysql
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: farmconnect-secrets
+                  key: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              value: "order_db"
+          volumeMounts:
+            - name: order-db-data
+              mountPath: /var/lib/mysql
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "mysqladmin ping -h localhost -u root -p\"$MYSQL_ROOT_PASSWORD\""]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "mysqladmin ping -h localhost -u root -p\"$MYSQL_ROOT_PASSWORD\""]
+            initialDelaySeconds: 40
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+  volumeClaimTemplates:
+    - metadata:
+        name: order-db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+
+# ---------------------------------------------------------------------------
+# order-db - Service
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-db
+  namespace: farmconnect
+  labels:
+    app: order-db
+spec:
+  type: ClusterIP
+  selector:
+    app: order-db
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306
+
+# ---------------------------------------------------------------------------
+# user-service
+# ---------------------------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: farmconnect
+  labels:
+    app: user-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: user-service
+          image: "<DOCKERHUB_USERNAME>/farmconnect-user-service:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+              name: http
+          envFrom:
+            - configMapRef:
+                name: farmconnect-config
+            - secretRef:
+                name: farmconnect-secrets
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:mysql://user-db:3306/user_db?createDatabaseIfNotExist=true"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: "root"
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: farmconnect-secrets
+                  key: MYSQL_ROOT_PASSWORD
+            - name: JAVA_OPTS
+              value: "-XX:MaxRAMPercentage=75.0"
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 50
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+# ---------------------------------------------------------------------------
+# user-service - Service
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: farmconnect
+  labels:
+    app: user-service
+spec:
+  type: ClusterIP
+  selector:
+    app: user-service
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081
+
+# ---------------------------------------------------------------------------
+# product-service
+# ---------------------------------------------------------------------------
+---
+# NOTE ON REPLICAS: product-service still stores uploaded images on local disk (same as
+# docker-compose's product-uploads volume). A ReadWriteOnce EBS volume can only be
+# attached to one pod at a time, so this stays at 1 replica for now - scaling this
+# horizontally means migrating uploads to S3 first (at which point this can become
+# stateless and scale like the other business services). Tracked as a known limitation.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service
+  namespace: farmconnect
+  labels:
+    app: product-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-service
+  template:
+    metadata:
+      labels:
+        app: product-service
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: product-service
+          image: "<DOCKERHUB_USERNAME>/farmconnect-product-service:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8082
+              name: http
+          envFrom:
+            - configMapRef:
+                name: farmconnect-config
+            - secretRef:
+                name: farmconnect-secrets
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:mysql://product-db:3306/product_db?createDatabaseIfNotExist=true"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: "root"
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: farmconnect-secrets
+                  key: MYSQL_ROOT_PASSWORD
+            - name: JAVA_OPTS
+              value: "-XX:MaxRAMPercentage=75.0"
+          volumeMounts:
+            - name: product-uploads
+              mountPath: /app/uploads
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            initialDelaySeconds: 50
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: product-uploads
+          persistentVolumeClaim:
+            claimName: product-uploads-pvc
+
+# ---------------------------------------------------------------------------
+# product-service - Service + uploads PVC
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-service
+  namespace: farmconnect
+  labels:
+    app: product-service
+spec:
+  type: ClusterIP
+  selector:
+    app: product-service
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
+---
+# Separate PVC (not a StatefulSet volumeClaimTemplate) since product-service is a plain
+# Deployment - this claim is created once and reused across pod restarts/rescheduling.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: product-uploads-pvc
+  namespace: farmconnect
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+
+# ---------------------------------------------------------------------------
+# order-service
+# ---------------------------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: farmconnect
+  labels:
+    app: order-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: order-service
+          image: "<DOCKERHUB_USERNAME>/farmconnect-order-service:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8083
+              name: http
+          envFrom:
+            - configMapRef:
+                name: farmconnect-config
+            - secretRef:
+                name: farmconnect-secrets
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:mysql://order-db:3306/order_db?createDatabaseIfNotExist=true"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: "root"
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: farmconnect-secrets
+                  key: MYSQL_ROOT_PASSWORD
+            - name: JAVA_OPTS
+              value: "-XX:MaxRAMPercentage=75.0"
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8083
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8083
+            initialDelaySeconds: 50
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+# ---------------------------------------------------------------------------
+# order-service - Service
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: farmconnect
+  labels:
+    app: order-service
+spec:
+  type: ClusterIP
+  selector:
+    app: order-service
+  ports:
+    - name: http
+      port: 8083
+      targetPort: 8083
+
+# ---------------------------------------------------------------------------
+# admin-service (no database - REST aggregator)
+# ---------------------------------------------------------------------------
+---
+# admin-service owns no database of its own (see database-per-service split) - it only
+# needs Eureka/config-server/JWT wiring, no SPRING_DATASOURCE_* env vars at all.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-service
+  namespace: farmconnect
+  labels:
+    app: admin-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: admin-service
+  template:
+    metadata:
+      labels:
+        app: admin-service
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: admin-service
+          image: "<DOCKERHUB_USERNAME>/farmconnect-admin-service:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8084
+              name: http
+          envFrom:
+            - configMapRef:
+                name: farmconnect-config
+            - secretRef:
+                name: farmconnect-secrets
+          env:
+            - name: JAVA_OPTS
+              value: "-XX:MaxRAMPercentage=75.0"
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8084
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8084
+            initialDelaySeconds: 50
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+# ---------------------------------------------------------------------------
+# admin-service - Service
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-service
+  namespace: farmconnect
+  labels:
+    app: admin-service
+spec:
+  type: ClusterIP
+  selector:
+    app: admin-service
+  ports:
+    - name: http
+      port: 8084
+      targetPort: 8084
+
+# ---------------------------------------------------------------------------
+# api-gateway
+# ---------------------------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: farmconnect
+  labels:
+    app: api-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: api-gateway
+          image: "<DOCKERHUB_USERNAME>/farmconnect-api-gateway:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: farmconnect-config
+            - secretRef:
+                name: farmconnect-secrets
+          env:
+            - name: JAVA_OPTS
+              value: "-XX:MaxRAMPercentage=75.0"
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 50
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+# ---------------------------------------------------------------------------
+# api-gateway - Service
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: farmconnect
+  labels:
+    app: api-gateway
+spec:
+  type: ClusterIP
+  selector:
+    app: api-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+# ---------------------------------------------------------------------------
+# frontend
+# ---------------------------------------------------------------------------
+---
+# No env vars needed here - the same image built for docker-compose already proxies
+# /api and /uploads to "http://api-gateway:8080" in its nginx.conf, and the Kubernetes
+# Service for api-gateway (see ../api-gateway/svc.yml) is named exactly "api-gateway" -
+# so this image runs unchanged in EKS.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: farmconnect
+  labels:
+    app: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: frontend
+          image: "<DOCKERHUB_USERNAME>/farmconnect-frontend:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+
+# ---------------------------------------------------------------------------
+# frontend - Service (ClusterIP, fronted by the Ingress below)
+# ---------------------------------------------------------------------------
+---
+# ClusterIP, not LoadBalancer - the Ingress (ingress.yml, in this same folder) is now the
+# public entry point instead, provisioning an AWS ALB via the AWS Load Balancer Controller.
+# Keeping this as type: LoadBalancer as well would create a second, redundant load balancer
+# alongside the ALB - this Service exists purely so the Ingress has something to route to.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: farmconnect
+  labels:
+    app: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+
+# ---------------------------------------------------------------------------
+# frontend - Ingress (provisions an AWS ALB - see this file's comments for prerequisites)
+# ---------------------------------------------------------------------------
+---
+# Provisions an AWS Application Load Balancer (ALB) as the public entry point, routing
+# everything to the frontend Service (which in turn proxies /api and /uploads to
+# api-gateway internally via nginx - see farmconnect-frontend/nginx.conf).
+#
+# PREREQUISITE: this requires the AWS Load Balancer Controller to be installed on your
+# cluster - it's what actually watches for Ingress objects with ingressClassName: alb and
+# provisions/configures the real ALB. It's not installed by default on a plain EKS cluster,
+# even one provisioned via Terraform, unless your Terraform specifically added it. Install
+# via Helm (needs an IAM policy + IRSA role for the controller's own service account -
+# see https://docs.aws.amazon.com/eks/latest/userguide/aws-load-balancer-controller.html):
+#
+#   helm repo add eks https://aws.github.io/eks-charts
+#   helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+#     -n kube-system \
+#     --set clusterName=<your-cluster-name> \
+#     --set serviceAccount.create=true \
+#     --set serviceAccount.name=aws-load-balancer-controller
+#
+# Without it, this Ingress object will sit with no ADDRESS forever - `kubectl describe
+# ingress frontend-ingress -n farmconnect` will show events explaining what it's waiting on.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend-ingress
+  namespace: farmconnect
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # target-type: ip routes ALB traffic directly to pod IPs (via the VPC CNI) instead of
+    # through NodePort - needs your pods to be reachable from the ALB's subnets, which they
+    # will be if the EKS/VPC Terraform used the standard EKS-managed-node-group + VPC CNI setup.
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    # --- HTTPS (optional but recommended for anything beyond a quick test) ---
+    # 1. Request/validate a cert in ACM for your domain (must be in the same region as the ALB).
+    # 2. Point a DNS record at the ALB's hostname once it exists (`kubectl get ingress -n farmconnect`).
+    # 3. Uncomment the three lines below with your cert's ARN, and add 443 to listen-ports above:
+    #    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:<region>:<account-id>:certificate/<cert-id>
+    # alb.ingress.kubernetes.io/ssl-redirect: "443"
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+

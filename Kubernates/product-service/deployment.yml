@@ -1,0 +1,77 @@
+# NOTE ON REPLICAS: product-service still stores uploaded images on local disk (same as
+# docker-compose's product-uploads volume). A ReadWriteOnce EBS volume can only be
+# attached to one pod at a time, so this stays at 1 replica for now - scaling this
+# horizontally means migrating uploads to S3 first (at which point this can become
+# stateless and scale like the other business services). Tracked as a known limitation.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service
+  namespace: farmconnect
+  labels:
+    app: product-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-service
+  template:
+    metadata:
+      labels:
+        app: product-service
+    spec:
+      serviceAccountName: farmconnect-sa
+      containers:
+        - name: product-service
+          image: "<DOCKERHUB_USERNAME>/farmconnect-product-service:latest"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8082
+              name: http
+          envFrom:
+            - configMapRef:
+                name: farmconnect-config
+            - secretRef:
+                name: farmconnect-secrets
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:mysql://product-db:3306/product_db?createDatabaseIfNotExist=true"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: "root"
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: farmconnect-secrets
+                  key: MYSQL_ROOT_PASSWORD
+            - name: JAVA_OPTS
+              value: "-XX:MaxRAMPercentage=75.0"
+          volumeMounts:
+            - name: product-uploads
+              mountPath: /app/uploads
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            initialDelaySeconds: 50
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: product-uploads
+          persistentVolumeClaim:
+            claimName: product-uploads-pvc

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-db
+  namespace: farmconnect
+  labels:
+    app: order-db
+spec:
+  type: ClusterIP
+  selector:
+    app: order-db
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306

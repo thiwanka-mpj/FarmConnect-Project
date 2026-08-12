@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-service
+  namespace: farmconnect
+  labels:
+    app: product-service
+spec:
+  type: ClusterIP
+  selector:
+    app: product-service
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
+---
+# Separate PVC (not a StatefulSet volumeClaimTemplate) since product-service is a plain
+# Deployment - this claim is created once and reused across pod restarts/rescheduling.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: product-uploads-pvc
+  namespace: farmconnect
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi

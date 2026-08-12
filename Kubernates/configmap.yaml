@@ -1,0 +1,21 @@
+# Shared, non-secret config injected into every business/infra service via envFrom.
+# Values here use Kubernetes Service names (see each svc.yml) - since every Service is
+# named identically to its docker-compose counterpart, these match the defaults already
+# baked into each service's application.properties (e.g. ${EUREKA_URI:http://discovery-service:8761/eureka/}).
+# They're spelled out explicitly here anyway rather than relying on those defaults, since
+# a manifest that states its own wiring is easier to reason about than one that doesn't.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: farmconnect-config
+  namespace: farmconnect
+data:
+  EUREKA_URI: "http://discovery-service:8761/eureka/"
+  CONFIG_SERVER_URI: "http://config-server:8888"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  # Replace with your actual ALB/NLB hostname (or domain, once you put one in front of it)
+  # once you know it - `kubectl get svc frontend -n farmconnect` after the first deploy.
+  CORS_ALLOWED_ORIGINS: "http://localhost"
+  JPA_DDL_AUTO: "validate"
