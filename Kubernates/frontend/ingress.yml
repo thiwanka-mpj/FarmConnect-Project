@@ -1,0 +1,55 @@
+# Provisions an AWS Application Load Balancer (ALB) as the public entry point, routing
+# everything to the frontend Service (which in turn proxies /api and /uploads to
+# api-gateway internally via nginx - see farmconnect-frontend/nginx.conf).
+#
+# PREREQUISITE: this requires the AWS Load Balancer Controller to be installed on your
+# cluster - it's what actually watches for Ingress objects with ingressClassName: alb and
+# provisions/configures the real ALB. It's not installed by default on a plain EKS cluster,
+# even one provisioned via Terraform, unless your Terraform specifically added it. Install
+# via Helm (needs an IAM policy + IRSA role for the controller's own service account -
+# see https://docs.aws.amazon.com/eks/latest/userguide/aws-load-balancer-controller.html):
+#
+#   helm repo add eks https://aws.github.io/eks-charts
+#   helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+#     -n kube-system \
+#     --set clusterName=<your-cluster-name> \
+#     --set serviceAccount.create=true \
+#     --set serviceAccount.name=aws-load-balancer-controller
+#
+# Without it, this Ingress object will sit with no ADDRESS forever - `kubectl describe
+# ingress frontend-ingress -n farmconnect` will show events explaining what it's waiting on.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend-ingress
+  namespace: farmconnect
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # target-type: ip routes ALB traffic directly to pod IPs (via the VPC CNI) instead of
+    # through NodePort - needs your pods to be reachable from the ALB's subnets, which they
+    # will be if the EKS/VPC Terraform used the standard EKS-managed-node-group + VPC CNI setup.
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    # --- HTTPS (optional but recommended for anything beyond a quick test) ---
+    # 1. Request/validate a cert in ACM for your domain (must be in the same region as the ALB).
+    # 2. Point a DNS record at the ALB's hostname once it exists (`kubectl get ingress -n farmconnect`).
+    # 3. Uncomment the three lines below with your cert's ARN, and add 443 to listen-ports above:
+    #    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:<region>:<account-id>:certificate/<cert-id>
+    # alb.ingress.kubernetes.io/ssl-redirect: "443"
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
