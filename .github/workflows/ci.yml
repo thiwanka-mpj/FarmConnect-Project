@@ -1,0 +1,213 @@
+name: CI
+
+# Runs on every push and PR - this is the fast-feedback loop, nothing here pushes images
+# or touches Docker Hub/AWS. See docker-publish.yml for the image build/push (which also
+# drives the GitOps deploy - see ../../argocd/README.md) and bootstrap-secrets.yml for the
+# one manual, human-triggered piece (the real Kubernetes Secret ArgoCD won't manage).
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: "17"
+  NODE_VERSION: "22"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Backend: one job per Maven module, run in parallel via matrix. Each module's
+  # own unit tests run here (see farmconnect-backend/*/src/test) - product-service,
+  # order-service, user-service (+ its H2 MockMvc integration test), and
+  # admin-service all have real test suites; the infra modules (discovery-service,
+  # config-server, api-gateway) don't have tests yet but still get compiled to
+  # catch build breaks early.
+  # ---------------------------------------------------------------------------
+  backend-test:
+    name: Backend / ${{ matrix.module }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - discovery-service
+          - config-server
+          - api-gateway
+          - user-service
+          - product-service
+          - order-service
+          - admin-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Build & test ${{ matrix.module }}
+        working-directory: farmconnect-backend
+        # -am also builds this module's dependencies (the parent POM) so the reactor
+        # resolves correctly without needing every sibling module built first.
+        run: mvn -B -pl ${{ matrix.module }} -am verify
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-${{ matrix.module }}
+          path: farmconnect-backend/${{ matrix.module }}/target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Frontend: install, build (CRA's build already runs ESLint - a lint error fails
+  # the build, so there's no separate lint step), and run the test suite.
+  # ---------------------------------------------------------------------------
+  frontend-build:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: farmconnect-frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: farmconnect-frontend
+        run: npm ci
+
+      - name: Run tests
+        working-directory: farmconnect-frontend
+        run: npm test
+        env:
+          CI: true
+
+      - name: Build production bundle
+        working-directory: farmconnect-frontend
+        run: npm run build
+        env:
+          CI: true
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: farmconnect-frontend/build/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Docker: build (but don't push) every image in the project to make sure every
+  # Dockerfile still actually builds. Catches the class of bug where the app code
+  # compiles fine locally but the multi-stage Docker build breaks (wrong COPY path,
+  # missing sibling pom, etc.) - exactly the kind of thing that only shows up here.
+  # ---------------------------------------------------------------------------
+  docker-build:
+    name: Docker / ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: discovery-service
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/discovery-service/Dockerfile
+          - image: config-server
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/config-server/Dockerfile
+          - image: api-gateway
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/api-gateway/Dockerfile
+          - image: user-service
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/user-service/Dockerfile
+          - image: product-service
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/product-service/Dockerfile
+          - image: order-service
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/order-service/Dockerfile
+          - image: admin-service
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/admin-service/Dockerfile
+          - image: frontend
+            context: farmconnect-frontend
+            dockerfile: farmconnect-frontend/Dockerfile
+          - image: user-db
+            context: database/user-db
+            dockerfile: database/user-db/Dockerfile
+          - image: product-db
+            context: database/product-db
+            dockerfile: database/product-db/Dockerfile
+          - image: order-db
+            context: database/order-db
+            dockerfile: database/order-db/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.image }} (not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: false
+          tags: farmconnect-${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # ---------------------------------------------------------------------------
+  # Kubernetes manifests: validate every YAML under Kubernates/ against the
+  # upstream Kubernetes schemas - catches typos/structural mistakes (wrong field
+  # name, bad indentation, invalid enum value) before they ever reach kubectl.
+  # ---------------------------------------------------------------------------
+  k8s-lint:
+    name: Kubernetes manifest lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR (avoids anonymous pull rate limits)
+        run: echo "${{ github.token }}" | docker login https://ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: kubeconform
+        uses: docker://ghcr.io/yannh/kubeconform:latest-alpine
+        with:
+          entrypoint: /kubeconform
+          args: >-
+            -strict
+            -ignore-missing-schemas
+            -summary
+            -kubernetes-version 1.29.0
+            Kubernates/complete-deploy.yml
+
+  # ---------------------------------------------------------------------------
+  # Secret scanning: fail the build if anything that looks like a real credential
+  # (not the deliberate REPLACE_WITH_* placeholders in secrets.yaml/.env.example)
+  # gets committed.
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
