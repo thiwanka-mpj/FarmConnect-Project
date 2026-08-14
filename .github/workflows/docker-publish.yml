@@ -1,0 +1,129 @@
+name: Publish images to Docker Hub
+
+# Runs after every push to main (and version tags) - by the time code lands on main it's
+# expected to have already passed ci.yml (enforce this with a branch protection rule
+# requiring the "CI" check to pass before merging - GitHub doesn't gate pushes to main
+# itself, only PRs, so the branch protection rule is what actually makes that true).
+#
+# This is the start of the GitOps loop: after every image is pushed, the final job bumps
+# every Kubernates/*/deployment.yml to the new tag and commits that change back to main.
+# ArgoCD (watching this repo - see argocd/README.md) picks up that commit and syncs the
+# cluster automatically. There is deliberately no "deploy" step in this workflow itself.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: false # never cancel a half-finished image push
+
+jobs:
+  publish:
+    name: Build & push / ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: discovery-service
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/discovery-service/Dockerfile
+          - image: config-server
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/config-server/Dockerfile
+          - image: api-gateway
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/api-gateway/Dockerfile
+          - image: user-service
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/user-service/Dockerfile
+          - image: product-service
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/product-service/Dockerfile
+          - image: order-service
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/order-service/Dockerfile
+          - image: admin-service
+            context: farmconnect-backend
+            dockerfile: farmconnect-backend/admin-service/Dockerfile
+          - image: frontend
+            context: farmconnect-frontend
+            dockerfile: farmconnect-frontend/Dockerfile
+          - image: user-db
+            context: database/user-db
+            dockerfile: database/user-db/Dockerfile
+          - image: product-db
+            context: database/product-db
+            dockerfile: database/product-db/Dockerfile
+          - image: order-db
+            context: database/order-db
+            dockerfile: database/order-db/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/farmconnect-${{ matrix.image }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/farmconnect-${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # ---------------------------------------------------------------------------
+  # GitOps trigger: pin every deployment.yml (and complete-deploy.yml, for anyone
+  # using the manual-apply path) to the image tag that was just pushed, and commit
+  # that as the new desired state. ArgoCD does the actual deploying from here.
+  # ---------------------------------------------------------------------------
+  update-manifests:
+    name: Bump manifests to :${{ github.sha }}
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Default GITHUB_TOKEN, deliberately - a push made with it does NOT trigger
+          # other workflows (including this one), so this commit can't cause an
+          # infinite push -> publish -> commit -> push loop. Don't swap this for a PAT
+          # unless you also add an explicit loop guard.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump image tags to ${{ github.sha }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cd Kubernates
+          # Only touches files that reference our own images (the placeholder, or an
+          # already-bumped previous sha) - redis/kafka's upstream images are untouched.
+          grep -rlE "${DOCKERHUB_USERNAME}/farmconnect-|<DOCKERHUB_USERNAME>/farmconnect-" . | xargs -r sed -i \
+            -E "s#(<DOCKERHUB_USERNAME>|${DOCKERHUB_USERNAME})/farmconnect-([a-z-]+):[a-zA-Z0-9._-]+#${DOCKERHUB_USERNAME}/farmconnect-\2:${SHA}#g"
+
+      - name: Commit & push if anything changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "No image tag changes - nothing to commit."
+            exit 0
+          fi
+          git add Kubernates/
+          git commit -m "deploy: bump images to ${GITHUB_SHA}"
+          git push origin HEAD:main
