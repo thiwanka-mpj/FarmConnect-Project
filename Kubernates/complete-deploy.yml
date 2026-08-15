@@ -170,7 +170,7 @@ spec:
         - name: discovery-service
           # Build & push from ./farmconnect-backend (Dockerfile: discovery-service/Dockerfile)
           # to your Docker Hub repo, then replace this placeholder.
-          image: "thiwanka365/farmconnect-discovery-service:b00f36b93df3e24b84c93de1cd12d236615b4c9f"
+          image: "thiwanka365/farmconnect-discovery-service:5d2b8bde90e9d774c5a5e0575f10cb898704a5a9"
           imagePullPolicy: Always
           ports:
             - containerPort: 8761
@@ -243,7 +243,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: config-server
-          image: "thiwanka365/farmconnect-config-server:b00f36b93df3e24b84c93de1cd12d236615b4c9f"
+          image: "thiwanka365/farmconnect-config-server:5d2b8bde90e9d774c5a5e0575f10cb898704a5a9"
           imagePullPolicy: Always
           ports:
             - containerPort: 8888
@@ -515,7 +515,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: user-db
-          image: "thiwanka365/farmconnect-user-db:b00f36b93df3e24b84c93de1cd12d236615b4c9f"
+          image: "thiwanka365/farmconnect-user-db:5d2b8bde90e9d774c5a5e0575f10cb898704a5a9"
           imagePullPolicy: Always
           ports:
             - containerPort: 3306
@@ -615,7 +615,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: product-db
-          image: "thiwanka365/farmconnect-product-db:b00f36b93df3e24b84c93de1cd12d236615b4c9f"
+          image: "thiwanka365/farmconnect-product-db:5d2b8bde90e9d774c5a5e0575f10cb898704a5a9"
           imagePullPolicy: Always
           ports:
             - containerPort: 3306
@@ -715,7 +715,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: order-db
-          image: "thiwanka365/farmconnect-order-db:b00f36b93df3e24b84c93de1cd12d236615b4c9f"
+          image: "thiwanka365/farmconnect-order-db:5d2b8bde90e9d774c5a5e0575f10cb898704a5a9"
           imagePullPolicy: Always
           ports:
             - containerPort: 3306
@@ -805,7 +805,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: user-service
-          image: "thiwanka365/farmconnect-user-service:b00f36b93df3e24b84c93de1cd12d236615b4c9f"
+          image: "thiwanka365/farmconnect-user-service:5d2b8bde90e9d774c5a5e0575f10cb898704a5a9"
           imagePullPolicy: Always
           ports:
             - containerPort: 8081
@@ -900,7 +900,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: product-service
-          image: "thiwanka365/farmconnect-product-service:b00f36b93df3e24b84c93de1cd12d236615b4c9f"
+          image: "thiwanka365/farmconnect-product-service:5d2b8bde90e9d774c5a5e0575f10cb898704a5a9"
           imagePullPolicy: Always
           ports:
             - containerPort: 8082
@@ -1010,7 +1010,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: order-service
-          image: "thiwanka365/farmconnect-order-service:b00f36b93df3e24b84c93de1cd12d236615b4c9f"
+          image: "thiwanka365/farmconnect-order-service:5d2b8bde90e9d774c5a5e0575f10cb898704a5a9"
           imagePullPolicy: Always
           ports:
             - containerPort: 8083
@@ -1102,7 +1102,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: admin-service
-          image: "thiwanka365/farmconnect-admin-service:b00f36b93df3e24b84c93de1cd12d236615b4c9f"
+          image: "thiwanka365/farmconnect-admin-service:5d2b8bde90e9d774c5a5e0575f10cb898704a5a9"
           imagePullPolicy: Always
           ports:
             - containerPort: 8084
@@ -1183,7 +1183,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: api-gateway
-          image: "thiwanka365/farmconnect-api-gateway:b00f36b93df3e24b84c93de1cd12d236615b4c9f"
+          image: "thiwanka365/farmconnect-api-gateway:5d2b8bde90e9d774c5a5e0575f10cb898704a5a9"
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -1268,7 +1268,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: frontend
-          image: "thiwanka365/farmconnect-frontend:b00f36b93df3e24b84c93de1cd12d236615b4c9f"
+          image: "thiwanka365/farmconnect-frontend:5d2b8bde90e9d774c5a5e0575f10cb898704a5a9"
           imagePullPolicy: Always
           ports:
             - containerPort: 80
