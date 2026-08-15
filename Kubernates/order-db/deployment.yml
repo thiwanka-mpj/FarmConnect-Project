@@ -28,7 +28,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: order-db
-          image: "thiwanka365/farmconnect-order-db:5d2b8bde90e9d774c5a5e0575f10cb898704a5a9"
+          image: "thiwanka365/farmconnect-order-db:bf489e68bfe36e4a1cc3cac652b21eae0211110d"
           imagePullPolicy: Always
           ports:
             - containerPort: 3306
