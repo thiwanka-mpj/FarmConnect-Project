@@ -11,12 +11,12 @@ A microservices marketplace connecting farmers, customers, riders, and admins. S
                                        │ /api/**, /uploads/**
                                        ▼
                               ┌─────────────────┐
-                              │   API Gateway    │  port 8080
-                              │ (Spring Cloud    │  - JWT pre-check
-                              │  Gateway)        │  - rate limiting (Redis)
-                              └────────┬─────────┘  - circuit breaking
+                              │   API Gateway   │  port 8080
+                              │ (Spring Cloud   │  - JWT pre-check
+                              │  Gateway)       │  - rate limiting (Redis)
+                              └────────┬────────┘  - circuit breaking
                                        │ lb://service-name
-        ┌──────────────┬──────────────┼──────────────┬──────────────┐
+        ┌──────────────┬───────────────┼──────────────┬─────────────┐
         ▼              ▼              ▼              ▼              │
   user-service   product-service  order-service  admin-service      │
    (8081)          (8082)          (8083)          (8084)           │
@@ -25,7 +25,7 @@ A microservices marketplace connecting farmers, customers, riders, and admins. S
    ┌──▼──┐          ┌───▼───┐          │  │        own - aggregates │
    │user-│          │product│      (resilience4j    live via REST,  │
    │ db  │          │  -db  │       circuit breaker  see below)     │
-   └─────┘          └───────┘       + retry, calls                 │
+   └─────┘          └───────┘       + retry, calls                  │
                         ▲            product-service                │
                         │            directly via Eureka)           │
                     ┌───┴───┐                                       │
