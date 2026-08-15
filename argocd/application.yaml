@@ -1,0 +1,58 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: farmconnect
+  namespace: argocd # the namespace ArgoCD itself is installed into, not "farmconnect"
+  finalizers:
+    # Ensures `argocd app delete` (or deleting this resource) also cleans up everything
+    # it deployed, instead of orphaning the farmconnect namespace's resources.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    # REPLACE with your actual repo URL before applying.
+    repoURL: "https://github.com/<your-org>/<your-repo>.git"
+    targetRevision: main
+    path: Kubernates
+    directory:
+      recurse: true
+      # complete-deploy.yml duplicates every object already covered by the individual
+      # per-service deployment.yml/svc.yml files in this same directory - if both were
+      # synced, ArgoCD would apply every resource twice. secrets.yaml is excluded because
+      # it only ever contains placeholder text in git; the real Secret is created directly
+      # in the cluster (see argocd/README.md and .github/workflows/bootstrap-secrets.yml) -
+      # ArgoCD never manages it, so it can't overwrite a real secret with a placeholder.
+      exclude: '{complete-deploy.yml,secrets.yaml}'
+
+  destination:
+    server: https://kubernetes.default.svc # the cluster ArgoCD itself runs on
+    namespace: farmconnect
+
+  syncPolicy:
+    automated:
+      prune: true # remove resources that were deleted from git
+      selfHeal: true # revert any manual kubectl edits back to what's in git
+    syncOptions:
+      - CreateNamespace=true # namespace.yaml also does this, but belt-and-suspenders
+      - PrunePropagationPolicy=foreground
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+
+  # StatefulSets' volumeClaimTemplates and Services' clusterIP get mutated by the
+  # cluster after creation - don't treat those as drift from git on every sync.
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      jsonPointers:
+        - /spec/volumeClaimTemplates
+    - group: ""
+      kind: Service
+      jsonPointers:
+        - /spec/clusterIP
+        - /spec/clusterIPs
