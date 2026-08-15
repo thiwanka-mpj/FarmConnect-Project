@@ -18,7 +18,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: config-server
-          image: "<DOCKERHUB_USERNAME>/farmconnect-config-server:latest"
+          image: "thiwanka365/farmconnect-config-server:b00f36b93df3e24b84c93de1cd12d236615b4c9f"
           imagePullPolicy: Always
           ports:
             - containerPort: 8888

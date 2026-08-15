@@ -20,7 +20,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: admin-service
-          image: "<DOCKERHUB_USERNAME>/farmconnect-admin-service:latest"
+          image: "thiwanka365/farmconnect-admin-service:b00f36b93df3e24b84c93de1cd12d236615b4c9f"
           imagePullPolicy: Always
           ports:
             - containerPort: 8084
