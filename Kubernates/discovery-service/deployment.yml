@@ -20,7 +20,7 @@ spec:
         - name: discovery-service
           # Build & push from ./farmconnect-backend (Dockerfile: discovery-service/Dockerfile)
           # to your Docker Hub repo, then replace this placeholder.
-          image: "thiwanka365/farmconnect-discovery-service:bf489e68bfe36e4a1cc3cac652b21eae0211110d"
+          image: "thiwanka365/farmconnect-discovery-service:9dc869cc553431b079897a467e05f6ceeffa0081"
           imagePullPolicy: Always
           ports:
             - containerPort: 8761

@@ -18,7 +18,7 @@ spec:
       serviceAccountName: farmconnect-sa
       containers:
         - name: user-service
-          image: "thiwanka365/farmconnect-user-service:bf489e68bfe36e4a1cc3cac652b21eae0211110d"
+          image: "thiwanka365/farmconnect-user-service:9dc869cc553431b079897a467e05f6ceeffa0081"
           imagePullPolicy: Always
           ports:
             - containerPort: 8081
