@@ -136,16 +136,6 @@ Same pattern for `product-service`, `order-service`, `admin-service`, `discovery
 
 Actually deploying to the cluster is **GitOps via ArgoCD**, not a GitHub Actions step - see `argocd/README.md`. ArgoCD watches this repo and syncs `Kubernates/` to the `farmconnect` namespace automatically; the commit `docker-publish.yml` makes is what triggers a deploy, not any `kubectl apply` run by CI.
 
-## Known limitations / next steps
-
-This is tuned for **local docker compose** - no CI/CD pipeline is included right now (the previous Jenkinsfile was removed; add one back, or GitHub Actions, whenever you're ready to automate builds).
-
-- Swap `config-server`'s native/classpath backend for a git-backed one so config changes don't require a rebuild.
-- No distributed tracing yet (Zipkin/Jaeger) - useful once you have more than a couple of hops to debug.
-- No centralized log aggregation (ELK/Loki) - right now `docker compose logs -f <service>` is how you'd debug.
-- Kafka runs as a single broker with no replication - fine for local dev, not for production.
-- Each database container currently uses the MySQL root user for simplicity; a real deployment should create a scoped user per service instead.
-
 ## Project structure
 
 ```
