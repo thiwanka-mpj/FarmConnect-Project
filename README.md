@@ -37,14 +37,14 @@ A microservices marketplace connecting farmers, customers, riders, and admins. S
   config-server (8888)             - serves shared, non-secret config
 ```
 
-- **discovery-service** — Eureka registry; every service finds every other service by name, not by hardcoded host:port
-- **config-server** — centralized config (CORS origins, resilience4j thresholds, Kafka topic names, logging) served from a bundled native/classpath repo; secrets stay in environment variables, never here
-- **api-gateway** — single entry point for all client traffic: routes by service name via Eureka, rate-limits per client IP (Redis-backed), circuit-breaks failing routes to a fallback, and does a fast-fail JWT check before forwarding
-- **user-service** — signup/login, JWT issuance, profile management. Owns `user_db`.
-- **product-service** — product catalog, image upload, consumes `order-events` from Kafka to decrement stock. Owns `product_db`.
-- **order-service** — validates orders against product-service (real price/availability check, resilience4j circuit breaker + retry) before committing, then publishes `order-events` to Kafka. Owns `order_db`.
-- **admin-service** — read-only dashboard aggregation. **Owns no database** - every number is fetched live from the other three services over REST (see "Database per service" below).
-- **frontend** — React SPA, role-based UI (Customer / Farmer / Rider / Admin), talks only to the gateway
+- **discovery-service** - Eureka registry; every service finds every other service by name, not by hardcoded host:port
+- **config-server** - centralized config (CORS origins, resilience4j thresholds, Kafka topic names, logging) served from a bundled native/classpath repo; secrets stay in environment variables, never here
+- **api-gateway** - single entry point for all client traffic: routes by service name via Eureka, rate-limits per client IP (Redis-backed), circuit-breaks failing routes to a fallback, and does a fast-fail JWT check before forwarding
+- **user-service** - signup/login, JWT issuance, profile management. Owns `user_db`.
+- **product-service** - product catalog, image upload, consumes `order-events` from Kafka to decrement stock. Owns `product_db`.
+- **order-service** - validates orders against product-service (real price/availability check, resilience4j circuit breaker + retry) before committing, then publishes `order-events` to Kafka. Owns `order_db`.
+- **admin-service** - read-only dashboard aggregation. **Owns no database** - every number is fetched live from the other three services over REST (see "Database per service" below).
+- **frontend** - React SPA, role-based UI (Customer / Farmer / Rider / Admin), talks only to the gateway
 
 ## Database per service
 
@@ -128,7 +128,7 @@ mvn -pl admin-service test
 docker build -t <dockerhub-user>/farmconnect-user-service:latest -f farmconnect-backend/user-service/Dockerfile farmconnect-backend
 docker push <dockerhub-user>/farmconnect-user-service:latest
 ```
-Same pattern for `product-service`, `order-service`, `admin-service`, `discovery-service`, `config-server`, `api-gateway` (all share build context `farmconnect-backend`), plus `database/user-db`, `database/product-db`, `database/order-db`, and `farmconnect-frontend` as their own contexts. `push-to-dockerhub.bat` automates tagging/pushing every image at once.
+Same pattern for `product-service`, `order-service`, `admin-service`, `discovery-service`, `config-server`, `api-gateway` (all share build context `farmconnect-backend`), plus `database/user-db`, `database/product-db`, `database/order-db`, and `farmconnect-frontend` as their own contexts.
 
 ## CI/CD
 
@@ -159,6 +159,5 @@ farmconnect/
 │   └── admin-service/          # no database - REST aggregator
 ├── farmconnect-frontend/
 ├── docker-compose.yml
-├── .env.example
-└── push-to-dockerhub.bat
+└── .env.example
 ```

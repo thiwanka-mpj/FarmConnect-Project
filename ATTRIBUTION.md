@@ -10,10 +10,10 @@ This repository combines two clearly separated bodies of work:
 
 This is the FarmConnect application as provided/built for a Univeristy project. It is
 imported in a single commit (see git log: *"Import baseline FarmConnect application"*)
-and is not claimed as original DevOps work.
+and then I implemented original DevOps practices for this project.
 
 
-## DevOps work (My Contribution)
+## Implemented DevOps Practices Here
 
 Everything else in this repository:
 
@@ -22,7 +22,7 @@ Everything else in this repository:
 | Containerization | `*/Dockerfile`, `*/.dockerignore` |
 | Local orchestration | `docker-compose.yml`, `.env.example` |
 | Cloud infrastructure | `Terraform/` |
-| Kubernetes manifests | `Kubernates/` |
+| Kubernetes manifests | `Kubernetes/` |
 | CI/CD pipelines | `.github/workflows/` |
 | GitOps deployment | `argocd/` |
 
