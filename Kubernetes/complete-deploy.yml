@@ -22,7 +22,7 @@ metadata:
 # ---------------------------------------------------------------------------
 # ServiceAccount
 # ---------------------------------------------------------------------------
-
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -32,7 +32,7 @@ metadata:
 # ---------------------------------------------------------------------------
 # Secrets (placeholders - see header comment above, don't apply this as-is)
 # ---------------------------------------------------------------------------
-
+---
 apiVersion: v1
 kind: Secret
 metadata:
@@ -46,7 +46,7 @@ stringData:
 # ---------------------------------------------------------------------------
 # Shared ConfigMap
 # ---------------------------------------------------------------------------
-
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -285,14 +285,6 @@ spec:
 # kafka (StatefulSet, KRaft mode)
 # ---------------------------------------------------------------------------
 ---
-# StatefulSet (not a plain Deployment) because Kafka needs a stable identity + persistent
-# disk across restarts - the file is still named deployment.yml to match every other
-# service folder's naming convention.
-#
-# Prerequisite: your EKS cluster needs the EBS CSI driver installed (it's an EKS add-on -
-# `aws eks describe-addon --cluster-name <cluster> --addon-name aws-ebs-csi-driver`, or
-# add it via your Terraform if it's not there yet) so the volumeClaimTemplate below can
-# actually provision a disk. Without it, the pod will sit in Pending forever.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -403,7 +395,7 @@ spec:
 # ---------------------------------------------------------------------------
 # user-db (StatefulSet)
 # ---------------------------------------------------------------------------
-
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -494,7 +486,7 @@ spec:
 # ---------------------------------------------------------------------------
 # product-db (StatefulSet)
 # ---------------------------------------------------------------------------
-
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -585,7 +577,7 @@ spec:
 # ---------------------------------------------------------------------------
 # order-db (StatefulSet)
 # ---------------------------------------------------------------------------
-
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -767,11 +759,6 @@ spec:
 # product-service
 # ---------------------------------------------------------------------------
 ---
-# NOTE ON REPLICAS: product-service still stores uploaded images on local disk (same as
-# docker-compose's product-uploads volume). A ReadWriteOnce EBS volume can only be
-# attached to one pod at a time, so this stays at 1 replica for now - scaling this
-# horizontally means migrating uploads to S3 first (at which point this can become
-# stateless and scale like the other business services). Tracked as a known limitation.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -972,8 +959,6 @@ spec:
 # admin-service (no database - REST aggregator)
 # ---------------------------------------------------------------------------
 ---
-# admin-service owns no database of its own (see database-per-service split) - it only
-# needs Eureka/config-server/JWT wiring, no SPRING_DATASOURCE_* env vars at all.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1135,7 +1120,7 @@ spec:
 # ---------------------------------------------------------------------------
 # frontend
 # ---------------------------------------------------------------------------
-
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1189,10 +1174,6 @@ spec:
 # frontend - Service (ClusterIP, fronted by the Ingress below)
 # ---------------------------------------------------------------------------
 ---
-# ClusterIP, not LoadBalancer - the Ingress (ingress.yml, in this same folder) is now the
-# public entry point instead, provisioning an AWS ALB via the AWS Load Balancer Controller.
-# Keeping this as type: LoadBalancer as well would create a second, redundant load balancer
-# alongside the ALB - this Service exists purely so the Ingress has something to route to.
 apiVersion: v1
 kind: Service
 metadata:
@@ -1212,7 +1193,7 @@ spec:
 # ---------------------------------------------------------------------------
 # frontend - Ingress (provisions an AWS ALB - see this file's comments for prerequisites)
 # ---------------------------------------------------------------------------
-
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
