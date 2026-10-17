@@ -1,9 +1,5 @@
 name: CI
 
-# Runs on every push and PR - this is the fast-feedback loop, nothing here pushes images
-# or touches Docker Hub/AWS. See docker-publish.yml for the image build/push (which also
-# drives the GitOps deploy - see ../../argocd/README.md) and bootstrap-secrets.yml for the
-# one manual, human-triggered piece (the real Kubernetes Secret ArgoCD won't manage).
 on:
   push:
     branches: ["**"]
@@ -54,8 +50,6 @@ jobs:
 
       - name: Build & test ${{ matrix.module }}
         working-directory: farmconnect-backend
-        # -am also builds this module's dependencies (the parent POM) so the reactor
-        # resolves correctly without needing every sibling module built first.
         run: mvn -B -pl ${{ matrix.module }} -am verify
 
       - name: Upload test results
@@ -192,7 +186,7 @@ jobs:
             -ignore-missing-schemas
             -summary
             -kubernetes-version 1.29.0
-            Kubernates/complete-deploy.yml
+            Kubernetes/complete-deploy.yml
 
   # ---------------------------------------------------------------------------
   # Secret scanning: fail the build if anything that looks like a real credential
