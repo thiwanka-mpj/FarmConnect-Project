@@ -8,9 +8,7 @@ This repository combines two clearly separated bodies of work:
 - `farmconnect-backend/`
 - `database/` (schema and seed data only - `init.sql` files)
 
-This is the FarmConnect application as provided/built for a Univeristy project. It is
-imported in a single commit (see git log: *"Import baseline FarmConnect application"*)
-and then I implemented original DevOps practices for this project.
+This is the FarmConnect application as built for a Univeristy group project by me and my 2 other friends. It is imported in a single commit (see git log: *"Import baseline FarmConnect application"*) and then I implemented original DevOps practices for this project.
 
 
 ## Implemented DevOps Practices Here

@@ -11,7 +11,7 @@ spec:
   source:
     repoURL: "https://github.com/thiwanka-mpj/FarmConnect-Project.git"
     targetRevision: main
-    path: Kubernates
+    path: Kubernetes
     directory:
       recurse: true
       exclude: '{complete-deploy.yml,secrets.yaml}'

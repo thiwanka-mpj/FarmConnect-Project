@@ -115,6 +115,6 @@ jobs:
             echo "No image tag changes - nothing to commit."
             exit 0
           fi
-          git add Kubernates/
+          git add Kubernetes/
           git commit -m "deploy: bump images to ${GITHUB_SHA}"
           git push origin HEAD:main
