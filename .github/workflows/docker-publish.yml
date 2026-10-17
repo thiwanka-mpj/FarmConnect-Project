@@ -1,14 +1,5 @@
 name: Publish images to Docker Hub
 
-# Runs after every push to main (and version tags) - by the time code lands on main it's
-# expected to have already passed ci.yml (enforce this with a branch protection rule
-# requiring the "CI" check to pass before merging - GitHub doesn't gate pushes to main
-# itself, only PRs, so the branch protection rule is what actually makes that true).
-#
-# This is the start of the GitOps loop: after every image is pushed, the final job bumps
-# every Kubernates/*/deployment.yml to the new tag and commits that change back to main.
-# ArgoCD (watching this repo - see argocd/README.md) picks up that commit and syncs the
-# cluster automatically. There is deliberately no "deploy" step in this workflow itself.
 on:
   push:
     branches: [main]
@@ -110,7 +101,7 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          cd Kubernates
+          cd Kubernetes
           # Only touches files that reference our own images (the placeholder, or an
           # already-bumped previous sha) - redis/kafka's upstream images are untouched.
           grep -rlE "${DOCKERHUB_USERNAME}/farmconnect-|<DOCKERHUB_USERNAME>/farmconnect-" . | xargs -r sed -i \
